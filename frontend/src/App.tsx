@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useAlertStore, Alert } from '@/store/useAlertStore';
+import { useAlertStore } from '@/store/useAlertStore';
 import { useAlertWebSocket } from '@/hooks/useAlertWebSocket';
 import { Header } from '@/components/Header';
 import { AlertFilters } from '@/components/AlertFilters';
@@ -11,7 +11,9 @@ export default function App() {
   const { readyState } = useAlertWebSocket();
   const alerts = useAlertStore((state) => state.alerts);
 
-  const [selectedAlert, setSelectedAlert] = useState<Alert | null>(null);
+  // On garde l'id et non une copie : le panneau suit ainsi les mises à jour du store.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedAlert = alerts.find((a) => a.id === selectedId) ?? null;
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSeverity, setSelectedSeverity] = useState('all');
   const [selectedStatus, setSelectedStatus] = useState('all');
@@ -53,13 +55,13 @@ export default function App() {
  
         <AlertList
           alerts={filteredAlerts}
-          onSelectAlert={setSelectedAlert}
+          onSelectAlert={(alert) => setSelectedId(alert.id)}
         />
       </main>
  
       <AlertDetails
         alert={selectedAlert}
-        onClose={() => setSelectedAlert(null)}
+        onClose={() => setSelectedId(null)}
       />
     </div>
   );

@@ -9,7 +9,9 @@ interface HeaderProps {
 }
 
 export const Header = ({ readyState }: HeaderProps) => {
-  const { isLive, toggleLive } = useAlertStore();
+  const isLive = useAlertStore((s) => s.isLive);
+  const toggleLive = useAlertStore((s) => s.toggleLive);
+  const pendingCount = useAlertStore((s) => s.pendingAlerts.length);
 
   const connectionStatus = {
     [ReadyState.CONNECTING]: { label: 'Connexion...', color: 'bg-yellow-500' },
@@ -41,7 +43,7 @@ export const Header = ({ readyState }: HeaderProps) => {
           variant={isLive ? "outline" : "default"}
           size="sm"
           onClick={toggleLive}
-          className="gap-2 w-32"
+          className="gap-2 min-w-32"
         >
           {isLive ? (
             <>
@@ -49,7 +51,7 @@ export const Header = ({ readyState }: HeaderProps) => {
             </>
           ) : (
             <>
-              <Play className="h-4 w-4 text-green-500" /> Reprendre
+              <Play className="h-4 w-4 text-green-500" /> Reprendre{pendingCount > 0 && ` (${pendingCount})`}
             </>
           )}
         </Button>

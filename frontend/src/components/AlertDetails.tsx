@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ShieldBan, CheckCircle2, Globe, Building, MapPin, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { API_URL } from '@/lib/config';
 
 interface AlertDetailsProps {
   alert: Alert | null;
@@ -26,7 +27,7 @@ export const AlertDetails = ({ alert, onClose }: AlertDetailsProps) => {
     
     setIsSubmitting(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/alerts/${alert.id}/action`, {
+      const response = await fetch(`${API_URL}/api/alerts/${encodeURIComponent(alert.id)}/action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: action === 'banned' ? 'ban' : 'ignore' }),
