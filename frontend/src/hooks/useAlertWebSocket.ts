@@ -28,7 +28,9 @@ export const useAlertWebSocket = () => {
         toast.error(`Erreur ${message.status_code} — ${message.message}`);
         return;
       }
-      useAlertStore.getState().addAlert(message.payload);
+      const { upsertAlerts } = useAlertStore.getState();
+      if (message.type === 'alert') upsertAlerts([message.payload], { highlight: true });
+      else upsertAlerts(message.payload);
     },
     // Les messages passent par onMessage : inutile de re-rendre le composant à chaque réception.
     filter: () => false,

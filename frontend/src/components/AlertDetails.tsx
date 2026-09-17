@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { ShieldBan, CheckCircle2, Globe, Building, MapPin, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { API_URL } from '@/lib/config';
+import { isAlert } from '@/lib/wsMessage';
 
 interface AlertDetailsProps {
   alert: Alert | null;
@@ -14,7 +15,7 @@ interface AlertDetailsProps {
 }
 
 export const AlertDetails = ({ alert, onClose }: AlertDetailsProps) => {
-  const { updateAlertStatus } = useAlertStore();
+  const upsertAlerts = useAlertStore((s) => s.upsertAlerts);
   const { data: ipInfo, isLoading, isError, error } = useIpInfo(alert?.ip || null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -22,24 +23,33 @@ export const AlertDetails = ({ alert, onClose }: AlertDetailsProps) => {
     if (!open) onClose();
   };
 
-  const handleAction = async (action: 'banned' | 'ignored') => {
+  const handleAction = async (action: 'ban' | 'ignore') => {
     if (!alert) return;
-    
+
     setIsSubmitting(true);
     try {
       const response = await fetch(`${API_URL}/api/alerts/${encodeURIComponent(alert.id)}/action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: action === 'banned' ? 'ban' : 'ignore' }),
+        body: JSON.stringify({ action }),
       });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.detail ?? "Le serveur backend n'a pas pu traiter cette action.");
+      }
 
-      if (!response.ok) throw new Error('Erreur API');
+      // Mise à jour immédiate avec la réponse ; le broadcast "update" qui suit est idempotent.
+      const updated: unknown[] = Array.isArray(body?.alerts) ? body.alerts : [];
+      upsertAlerts(updated.filter(isAlert));
 
-      updateAlertStatus(alert.id, action);
-      toast.success(`Action validée : l'IP ${alert.ip} a été ${action === 'banned' ? 'bannie' : 'ignorée'}`);
+      toast.success(
+        action === 'ban'
+          ? `IP ${alert.ip} bannie (${updated.length} alerte${updated.length > 1 ? 's' : ''} mise${updated.length > 1 ? 's' : ''} à jour)`
+          : 'Alerte ignorée'
+      );
       onClose();
-    } catch {
-      toast.error("Le serveur backend n'a pas pu traiter cette action.");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Le serveur backend n'a pas pu traiter cette action.");
     } finally {
       setIsSubmitting(false);
     }
@@ -119,15 +129,15 @@ export const AlertDetails = ({ alert, onClose }: AlertDetailsProps) => {
                 variant="destructive"
                 className="flex-1 gap-2"
                 disabled={isSubmitting || alert.status === 'banned'}
-                onClick={() => handleAction('banned')}
+                onClick={() => handleAction('ban')}
               >
                 <ShieldBan className="h-4 w-4" /> Bannir
               </Button>
               <Button
                 variant="secondary"
                 className="flex-1 gap-2"
-                disabled={isSubmitting || alert.status === 'ignored'}
-                onClick={() => handleAction('ignored')}
+                disabled={isSubmitting || alert.status !== 'active'}
+                onClick={() => handleAction('ignore')}
               >
                 <CheckCircle2 className="h-4 w-4" /> Ignorer
               </Button>

@@ -7,7 +7,6 @@ export interface Alert {
   severity: 'low' | 'medium' | 'high' | 'critical';
   threat_type: string;
   status: 'active' | 'banned' | 'ignored';
-  is_read: boolean;
 }
 
 const NEW_ALERT_HIGHLIGHT_MS = 1400;
@@ -20,8 +19,12 @@ interface AlertStore {
   pendingAlerts: Alert[];
   isLive: boolean;
   recentlyArrivedIds: Set<string>;
-  addAlert: (alert: Alert) => void;
-  updateAlertStatus: (id: string, status: Alert['status']) => void;
+  /**
+   * Point d'entrée unique pour les données serveur (snapshot, nouvelle alerte, mise à jour).
+   * `incoming` est trié du plus récent au plus ancien. Les alertes connues sont mises à jour
+   * sur place, les nouvelles sont ajoutées (ou mises en attente si le flux est en pause).
+   */
+  upsertAlerts: (incoming: Alert[], options?: { highlight?: boolean }) => void;
   toggleLive: () => void;
 }
 
@@ -31,34 +34,39 @@ export const useAlertStore = create<AlertStore>((set) => ({
   isLive: true,
   recentlyArrivedIds: new Set(),
 
-  addAlert: (alert) =>
+  upsertAlerts: (incoming, { highlight = false } = {}) =>
     set((state) => {
-      const known = (a: Alert) => a.id === alert.id;
-      if (state.alerts.some(known) || state.pendingAlerts.some(known)) return state;
+      const byId = new Map(incoming.map((a) => [a.id, a]));
+      const refresh = (list: Alert[]) => list.map((a) => byId.get(a.id) ?? a);
+      const alerts = refresh(state.alerts);
+      const pendingAlerts = refresh(state.pendingAlerts);
 
+      const known = new Set([...alerts, ...pendingAlerts].map((a) => a.id));
+      const fresh = incoming.filter((a) => !known.has(a.id));
+
+      if (fresh.length === 0) return { alerts, pendingAlerts };
       if (!state.isLive) {
-        return { pendingAlerts: [alert, ...state.pendingAlerts].slice(0, MAX_ALERTS) };
+        return { alerts, pendingAlerts: [...fresh, ...pendingAlerts].slice(0, MAX_ALERTS) };
+      }
+      if (!highlight) {
+        return { alerts: [...fresh, ...alerts].slice(0, MAX_ALERTS), pendingAlerts };
       }
 
+      const freshIds = fresh.map((a) => a.id);
       setTimeout(() => {
         set((s) => {
-          if (!s.recentlyArrivedIds.has(alert.id)) return s;
           const next = new Set(s.recentlyArrivedIds);
-          next.delete(alert.id);
+          freshIds.forEach((id) => next.delete(id));
           return { recentlyArrivedIds: next };
         });
       }, NEW_ALERT_HIGHLIGHT_MS);
 
-      const recentlyArrivedIds = new Set(state.recentlyArrivedIds);
-      recentlyArrivedIds.add(alert.id);
-
-      return { alerts: [alert, ...state.alerts].slice(0, MAX_ALERTS), recentlyArrivedIds };
+      return {
+        alerts: [...fresh, ...alerts].slice(0, MAX_ALERTS),
+        pendingAlerts,
+        recentlyArrivedIds: new Set([...state.recentlyArrivedIds, ...freshIds]),
+      };
     }),
-
-  updateAlertStatus: (id, status) =>
-    set((state) => ({
-      alerts: state.alerts.map((a) => (a.id === id ? { ...a, status, is_read: true } : a)),
-    })),
 
   toggleLive: () =>
     set((state) =>

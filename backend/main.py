@@ -5,11 +5,13 @@ import time
 import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.encoders import jsonable_encoder
 
+import alert_store
 from alert_service import generate_alert, generate_alert_or_error
 from ipinfo import IpInfoError, lookup_ip
 from models import AlertAction
@@ -20,6 +22,7 @@ logger = logging.getLogger(__name__)
 BROADCAST_INTERVAL_S = 15
 SEND_TIMEOUT_S = 5
 RATE_LIMIT_PER_MINUTE = 30
+SEED_ALERTS = 8
 
 ALLOWED_ORIGINS = [
     o.strip()
@@ -33,6 +36,11 @@ active_connections: set[WebSocket] = set()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # On garde la référence : une tâche asyncio non référencée peut être ramassée par le GC.
+    # Quelques alertes antidatées pour que le tableau ne soit pas vide au premier lancement.
+    alert_store.reset()
+    now = datetime.now(timezone.utc)
+    for i in range(SEED_ALERTS, 0, -1):
+        alert_store.add(generate_alert(now - timedelta(minutes=i * 3)))
     task = asyncio.create_task(broadcast_alerts())
     yield
     task.cancel()
@@ -76,8 +84,9 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     active_connections.add(websocket)
     try:
-        initial_alert = generate_alert()
-        await websocket.send_json({"type": "alert", "payload": jsonable_encoder(initial_alert)})
+        # Snapshot complet à chaque connexion : un client qui se reconnecte récupère
+        # les alertes et changements de statut manqués pendant la coupure.
+        await websocket.send_json({"type": "snapshot", "payload": jsonable_encoder(alert_store.newest_first())})
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
@@ -95,27 +104,41 @@ async def send_to_client(connection: WebSocket, payload: dict):
         active_connections.discard(connection)
 
 
+async def broadcast(payload: dict):
+    # Envoi en parallèle : un client lent ne bloque pas les autres.
+    await asyncio.gather(*(send_to_client(c, payload) for c in list(active_connections)))
+
+
 async def broadcast_alerts():
     while True:
         await asyncio.sleep(BROADCAST_INTERVAL_S)
-        if not active_connections:
-            continue
 
+        # L'ingestion continue même sans client connecté : l'historique se construit.
         result = generate_alert_or_error()
         if result["type"] == "alert":
-            payload = {"type": "alert", "payload": jsonable_encoder(result["payload"])}
+            alert = alert_store.add(result["payload"])
+            payload = {"type": "alert", "payload": jsonable_encoder(alert)}
         else:
             payload = {"type": "error", "status_code": result["status_code"], "message": result["message"]}
             logger.warning(f"Simulated ingestion failure: {result['status_code']} - {result['message']}")
 
-        # Envoi en parallèle : un client lent ne bloque plus les autres.
-        await asyncio.gather(*(send_to_client(c, payload) for c in list(active_connections)))
+        await broadcast(payload)
 
 
 @app.post("/api/alerts/{alert_id}/action", dependencies=[Depends(rate_limit)])
 async def handle_alert_action(alert_id: uuid.UUID, action_data: AlertAction):
-    await asyncio.sleep(0.5)
-    return {"status": "success", "alert_id": str(alert_id), "action": action_data.action}
+    try:
+        changed = alert_store.apply_action(str(alert_id), action_data.action)
+    except alert_store.AlertNotFound:
+        raise HTTPException(404, "Alerte introuvable.")
+    except alert_store.ActionConflict as e:
+        raise HTTPException(409, str(e))
+
+    # Tous les clients connectés voient le changement, pas seulement l'analyste qui agit.
+    updated = jsonable_encoder(changed)
+    if updated:
+        await broadcast({"type": "update", "payload": updated})
+    return {"alerts": updated}
 
 
 @app.get("/api/ip/{ip}", dependencies=[Depends(rate_limit)])

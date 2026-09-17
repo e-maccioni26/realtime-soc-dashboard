@@ -17,7 +17,7 @@ def client():
 
 def test_websocket_accepte_origine_autorisee(client):
     with client.websocket_connect("/ws/alerts", headers={"origin": ALLOWED}) as ws:
-        assert ws.receive_json()["type"] == "alert"
+        assert ws.receive_json()["type"] == "snapshot"
 
 
 @pytest.mark.parametrize("headers", [{"origin": "https://evil.example"}, {}])

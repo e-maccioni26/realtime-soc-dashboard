@@ -16,15 +16,14 @@ FAILURE_SCENARIOS = [
     {"status_code": 503, "message": "Service de génération d'alertes temporairement indisponible."},
 ]
 
-def generate_alert() -> Alert:
+def generate_alert(timestamp: datetime | None = None) -> Alert:
     return Alert(
         id=str(uuid.uuid4()),
         ip=random.choice(MOCK_IPS),
-        timestamp=datetime.now(timezone.utc),
+        timestamp=timestamp or datetime.now(timezone.utc),
         severity=random.choice(SEVERITIES),
         threat_type=random.choice(THREATS),
         status="active",
-        is_read=False,
     )
 
 def generate_alert_or_error() -> dict:
