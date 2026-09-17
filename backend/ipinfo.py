@@ -2,13 +2,18 @@ import asyncio
 import ipaddress
 import json
 import os
+import ssl
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+import certifi
+
 CACHE_TTL_S = 3600
 TIMEOUT_S = 5
 EXPOSED_FIELDS = ("ip", "city", "region", "country", "org", "timezone")
+# Bundle de certificats explicite : le Python de python.org sur macOS n'utilise pas ceux du système.
+SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 # ponytail: cache en mémoire sans éviction, borné en pratique par le nombre d'IP vues ; Redis si multi-instance
 _cache: dict[str, tuple[float, dict]] = {}
@@ -26,7 +31,7 @@ def _fetch(ip: str) -> dict:
     # Le token reste côté serveur : il n'apparaît jamais dans le bundle du navigateur.
     if token := os.getenv("IPINFO_TOKEN"):
         headers["Authorization"] = f"Bearer {token}"
-    with urlopen(Request(f"https://ipinfo.io/{ip}/json", headers=headers), timeout=TIMEOUT_S) as response:
+    with urlopen(Request(f"https://ipinfo.io/{ip}/json", headers=headers), timeout=TIMEOUT_S, context=SSL_CONTEXT) as response:
         return json.load(response)
 
 

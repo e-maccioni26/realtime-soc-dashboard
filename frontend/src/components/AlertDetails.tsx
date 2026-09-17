@@ -15,7 +15,7 @@ interface AlertDetailsProps {
 
 export const AlertDetails = ({ alert, onClose }: AlertDetailsProps) => {
   const { updateAlertStatus } = useAlertStore();
-  const { data: ipInfo, isLoading, isError } = useIpInfo(alert?.ip || null);
+  const { data: ipInfo, isLoading, isError, error } = useIpInfo(alert?.ip || null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleOpenChange = (open: boolean) => {
@@ -90,11 +90,17 @@ export const AlertDetails = ({ alert, onClose }: AlertDetailsProps) => {
 
               {isError && (
                 <div className="p-3 bg-destructive/10 text-destructive text-sm rounded-md border border-destructive/20">
-                  Impossible de récupérer les informations WHOIS pour cette adresse.
+                  {error.message}
                 </div>
               )}
 
-              {ipInfo && (
+              {ipInfo?.bogon && (
+                <div className="p-3 text-sm rounded-md border bg-muted/40 text-muted-foreground">
+                  Adresse privée ou réservée : aucune donnée de géolocalisation publique.
+                </div>
+              )}
+
+              {ipInfo && !ipInfo.bogon && (
                 <div className="space-y-2 text-sm border rounded-lg p-4 bg-card">
                   <div className="flex items-center gap-3">
                     <MapPin className="h-4 w-4 text-muted-foreground shrink-0" />
