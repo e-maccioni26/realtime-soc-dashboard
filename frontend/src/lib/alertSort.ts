@@ -1,4 +1,5 @@
 import { Alert } from '@/store/useAlertStore';
+import { STATUS_LABELS } from '@/lib/labels';
 
 export type SortOption =
   | 'date_desc'
@@ -43,7 +44,7 @@ export const sortAlerts = (alerts: Alert[], sortBy: SortOption): Alert[] => {
     case 'threat_type':
       return sorted.sort((a, b) => a.threat_type.localeCompare(b.threat_type));
     case 'status':
-      return sorted.sort((a, b) => a.status.localeCompare(b.status));
+      return sorted.sort((a, b) => STATUS_LABELS[a.status].localeCompare(STATUS_LABELS[b.status], 'fr'));
     default:
       return sorted;
   }

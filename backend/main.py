@@ -125,6 +125,11 @@ async def broadcast_alerts():
         await broadcast(payload)
 
 
+@app.get("/api/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.post("/api/alerts/{alert_id}/action", dependencies=[Depends(rate_limit)])
 async def handle_alert_action(alert_id: uuid.UUID, action_data: AlertAction):
     try:

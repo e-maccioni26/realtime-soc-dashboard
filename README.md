@@ -1,38 +1,100 @@
 # SOC Threat Monitor
 
-Application Single Page permettant de centraliser, enrichir et investiguer des alertes de sécurité (logs de connexion) en temps réel. Réalisée dans le cadre d'un test technique frontend.
+[![CI](https://github.com/e-maccioni26/realtime-soc-dashboard/actions/workflows/ci.yml/badge.svg)](https://github.com/e-maccioni26/realtime-soc-dashboard/actions/workflows/ci.yml)
+![React](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-6-3178c6?logo=typescript&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-Python_3.11-009688?logo=fastapi&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-## Aperçu
+Tableau de bord temps réel pour analystes SOC. Les alertes de sécurité arrivent en continu par WebSocket, chaque IP source peut être enrichie (géolocalisation, fournisseur) puis bannie ou ignorée. Toutes les personnes connectées voient les mêmes données et les mêmes décisions, sans rechargement.
 
-Les analystes SOC reçoivent un flux continu d'alertes (IP, type de menace, criticité, statut) diffusé via WebSocket. Chaque alerte peut être investiguée en un clic : géolocalisation et ISP de l'IP source (via IPinfo), puis bannissement ou mise en sourdine en un clic.
+![Tableau de bord](docs/dashboard.png)
 
-## Stack technique
+| Investigation d'une IP |
+| --- |
+| ![Panneau d'investigation](docs/investigation.png) |
 
-**Frontend**
-- React 19 + TypeScript + Vite
-- Zustand — état global du flux d'alertes
-- TanStack Query — enrichissement IPinfo (cache, TTL, gestion loading/error)
-- react-use-websocket — connexion temps réel avec reconnexion automatique
-- TailwindCSS v4 + shadcn/ui
+## Fonctionnalités
 
-**Backend**
-- FastAPI (Python) — génération et diffusion des alertes simulées via WebSocket, endpoint d'action (bannir/ignorer)
+- Flux d'alertes en direct, avec une animation d'arrivée colorée selon la sévérité.
+- Filtres par sévérité et par statut, recherche par IP ou type de menace, six tris.
+- Panneau d'investigation : ville, pays et fournisseur de l'IP via IPinfo. Les IP privées sont reconnues et ne déclenchent aucun appel externe.
+- Bannir une IP met à jour toutes ses alertes, y compris celles qui arriveront ensuite. Ignorer ne concerne qu'une alerte.
+- Mise en pause du flux : les alertes reçues pendant la pause sont gardées et comptées ("Reprendre (3)"), puis affichées à la reprise.
+- Reconnexion automatique avec délai croissant (1 s, 2 s, 4 s… jusqu'à 30 s). À la reconnexion, le client récupère tout ce qu'il a manqué.
+- Pannes simulées de la source de logs (429, 500, 502, 503 sur environ 15 % des cycles), affichées en toast sans interrompre le flux.
+- Thème clair ou sombre, navigation au clavier dans le tableau.
 
-## Installation et lancement
+## Architecture
 
-### Backend
+```mermaid
+flowchart LR
+    subgraph Navigateur
+        UI[React + Zustand]
+    end
+    subgraph Backend FastAPI
+        WS["/ws/alerts"]
+        ACT["POST /api/alerts/{id}/action"]
+        IP["GET /api/ip/{ip}"]
+        STORE[(alert_store<br/>état partagé)]
+        GEN[Générateur d'alertes<br/>toutes les 15 s]
+    end
+    IPINFO[(ipinfo.io)]
+
+    UI <-- snapshot, alert, update, error --> WS
+    UI -- ban / ignore --> ACT
+    UI -- enrichissement --> IP
+    GEN --> STORE
+    ACT --> STORE
+    STORE --> WS
+    IP -- cache 1 h --> IPINFO
+```
+
+Le backend garde une seule copie de l'état. Le front ne fait qu'en afficher le reflet, ce qui évite les divergences entre onglets.
+
+### Protocole WebSocket
+
+| Message | Envoyé quand | Contenu |
+| --- | --- | --- |
+| `snapshot` | à chaque connexion ou reconnexion | toutes les alertes, de la plus récente à la plus ancienne |
+| `alert` | une nouvelle alerte est ingérée | l'alerte |
+| `update` | un analyste bannit ou ignore | les alertes dont le statut a changé |
+| `error` | la source de logs simulée échoue | `status_code` et `message` |
+
+Côté client, tous ces messages passent par une seule fonction du store, `upsertAlerts`. Une alerte déjà connue est mise à jour sur place, une nouvelle est ajoutée ou mise en attente si le flux est en pause. Rejouer deux fois le même message ne change rien.
+
+## Sécurité
+
+- **CORS et WebSocket** : seules les origines de `ALLOWED_ORIGINS` sont acceptées. L'en-tête `Origin` est vérifié à l'ouverture du WebSocket, car CORS ne protège pas ce canal.
+- **Validation** : les messages WebSocket sont vérifiés côté client avant d'entrer dans le store. Un message mal formé est ignoré au lieu de faire planter l'interface. Côté serveur, les identifiants doivent être des UUID et les IP sont validées avec `ipaddress`.
+- **IPinfo via le backend** : le token reste sur le serveur et le fournisseur ne voit jamais l'IP de l'analyste. Seuls quelques champs texte sont renvoyés au navigateur.
+- **Limitation de débit** : 30 requêtes par minute par IP sur les routes REST.
+- **En-têtes HTTP** (image nginx) : Content-Security-Policy stricte (`script-src 'self'`), `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `frame-ancestors 'none'`.
+- **Conteneurs** : le backend tourne avec un utilisateur sans privilèges.
+
+## Lancer le projet
+
+### Avec Docker
+
+```bash
+docker compose up --build
+```
+
+Le tableau de bord est sur http://localhost:8080 et l'API sur http://localhost:8000.
+
+### En local
+
+Backend (Python 3.11) :
 
 ```bash
 cd backend
 python3 -m venv venv
-source venv/bin/activate      # Windows : venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+source venv/bin/activate
+pip install -r requirements-dev.txt
+uvicorn main:app --reload --port 8000 --ws-max-size 4096
 ```
 
-Le serveur écoute sur `http://localhost:8000`. Le flux d'alertes est diffusé via `ws://localhost:8000/ws/alerts`.
-
-### Frontend
+Frontend (Node 20.19 ou plus) :
 
 ```bash
 cd frontend
@@ -40,40 +102,62 @@ npm install
 npm run dev
 ```
 
-L'application est accessible sur `http://localhost:5173`. Le backend doit être lancé au préalable pour que le flux temps réel fonctionne.
+L'application est sur http://localhost:5173.
 
-## Fonctionnalités
+### Variables d'environnement
 
-**Flux de données**
-- Génération continue d'alertes côté backend, diffusées toutes les 15 secondes via WebSocket.
-- Simulation d'échecs réalistes (~15% des cycles, codes 429/500/502/503) représentant une panne de la source de logs, gérés sans jamais casser l'application.
-- Cache avec TTL (1h) sur les requêtes IPinfo pour éviter les appels redondants sur une même IP.
+| Variable | Côté | Défaut | Rôle |
+| --- | --- | --- | --- |
+| `ALLOWED_ORIGINS` | backend | `http://localhost:5173,http://localhost:4173` | origines autorisées (CORS et WebSocket) |
+| `IPINFO_TOKEN` | backend | vide | augmente le quota IPinfo, facultatif |
+| `VITE_API_URL` | frontend (build) | `http://localhost:8000` | URL de l'API |
+| `VITE_WS_URL` | frontend (build) | déduite de `VITE_API_URL` | URL du WebSocket |
+| `CSP_CONNECT_SRC` | image nginx | `http://localhost:8000 ws://localhost:8000` | origines autorisées par la CSP |
 
-**Interface**
-- Arrivée des nouvelles alertes en fondu + léger glissement, accompagnée d'un bref halo de la couleur de sévérité.
-- Panneau d'investigation par IP : géolocalisation, ISP/hébergeur (IPinfo).
-- Actions "Bannir l'IP" / "Ignorer l'alerte" avec état de chargement puis retour visuel de succès.
-- Filtres (sévérité, statut, recherche IP/menace) et tri (date, criticité, type de menace, statut).
-- Affichage des erreurs API via toasts non bloquants.
+## Tests et CI
 
-**Bonus**
-- Pause / reprise du flux live
-- Indicateur d'état de connexion WebSocket
-- Dark mode avec bouton de bascule (persistant, détection de la préférence système)
+```bash
+cd backend && pytest -q
+cd frontend && npm test
+```
 
-## Choix techniques
+- **Backend (pytest)** : contrôle de l'origine WebSocket, CORS, validation des entrées, limite de débit, proxy IPinfo (IP privées, filtrage, cache), règles de bannissement et diffusion des mises à jour.
+- **Frontend (Vitest)** : validation des messages, doublons, mise en pause, rattrapage après reconnexion, plafond mémoire.
 
-- **WebSocket plutôt que polling HTTP** : Plutôt que de faire un polling régulier (setInterval) côté frontend qui consomme des ressources, j'ai opté pour un serveur FastAPI. Cela permet d'établir une véritable connexion WebSocket, illustrant une gestion temps réel réaliste.
-- **Zustand plutôt que Redux** : Pour gérer un flux continu d'alertes, Zustand s'est imposé comme une alternative plus légère, rapide et moins verbeuse que Redux.
-- **TanStack Query pour l'enrichissement IPinfo** : Utilisé pour l'enrichissement IP via IPinfo. C'est le choix optimal pour répondre à la contrainte d'éviter les appels redondants grâce à son système de cache.
-- **shadcn/ui + TailwindCSS v4** : composants accessibles par défaut, UI cohérente et rapide à composer.
-- **Backend FastAPI volontairement minimal** : le sujet précise que l'évaluation porte sur les compétences frontend (état asynchrone, gestion de la donnée, performance de re-render, architecture, UX) ; le backend se limite donc à l'orchestration nécessaire (génération d'alertes, diffusion WebSocket, endpoint d'action), sans logique métier avancée.
-- **Séparation hooks / store / composants** : `useAlertWebSocket` et `useIpInfo` isolent la logique asynchrone, `useAlertStore` centralise la donnée, les composants restent focalisés sur l'affichage.
+GitHub Actions lance lint, tests et build pour chaque partie, puis construit les images Docker.
 
-## Ce qui manque / pistes d'amélioration avec plus de temps
+## Stack technique
 
-- Aucun test (unitaire, intégration, end-to-end) n'a été écrit.
-- Pas de CI (lint / test / build).
-- Pas de virtualisation de la liste (react-window ou équivalent) : non nécessaire à l'échelle actuelle, mais à prévoir si le volume d'alertes simultanées devait fortement augmenter.
-- L'endpoint `POST /api/alerts/{id}/action` ne simule pas d'échec ; seule la génération du flux d'alertes en simule.
-- Pas de maquette Figma dédiée : le design a été itéré directement en code (shadcn/Tailwind).
+| | |
+| --- | --- |
+| Frontend | React 19, TypeScript, Vite, Zustand, TanStack Query, react-use-websocket, Tailwind CSS v4, shadcn/ui |
+| Backend | FastAPI, Pydantic, Uvicorn |
+| Outillage | Vitest, pytest, ESLint, Docker, nginx, GitHub Actions |
+
+Zustand gère le flux d'alertes, mis à jour très souvent, avec des sélecteurs fins pour limiter les rendus. TanStack Query sert uniquement à l'enrichissement IP, où le cache et les états de chargement apportent quelque chose.
+
+## Structure
+
+```
+backend/
+  main.py            routes REST, WebSocket, diffusion, CORS, limite de débit
+  alert_store.py     état partagé et règles métier (ban, ignore)
+  alert_service.py   génération des alertes simulées et des pannes
+  ipinfo.py          proxy IPinfo avec validation et cache
+frontend/src/
+  hooks/             useAlertWebSocket, useIpInfo
+  store/             useAlertStore (Zustand)
+  lib/               validation des messages, tri, libellés, configuration
+  components/        tableau, filtres, panneau d'investigation, ErrorBoundary
+```
+
+## Limites connues
+
+- L'état est en mémoire : un redémarrage du backend repart de zéro. Tout l'accès aux données passe par `alert_store.py`, ce qui permet de brancher SQLite ou PostgreSQL sans toucher au reste.
+- Pas d'authentification. Les actions sont ouvertes à quiconque atteint l'API, ce qui convient à une démo mais pas à un usage réel.
+- Le tableau garde 500 alertes au maximum. Au-delà, il faudrait virtualiser la liste.
+- La limite de débit est tenue en mémoire, par processus. Derrière plusieurs instances, il faudrait la déplacer dans Redis.
+
+## Licence
+
+[MIT](LICENSE)

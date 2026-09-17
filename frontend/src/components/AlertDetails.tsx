@@ -8,6 +8,7 @@ import { ShieldBan, CheckCircle2, Globe, Building, MapPin, Loader2 } from 'lucid
 import { toast } from 'sonner';
 import { API_URL } from '@/lib/config';
 import { isAlert } from '@/lib/wsMessage';
+import { SEVERITY_LABELS, STATUS_LABELS } from '@/lib/labels';
 
 interface AlertDetailsProps {
   alert: Alert | null;
@@ -77,12 +78,12 @@ export const AlertDetails = ({ alert, onClose }: AlertDetailsProps) => {
               <div className="flex justify-between items-center">
                 <span className="text-sm text-muted-foreground">Sévérité</span>
                 <Badge variant={alert.severity === 'critical' ? 'destructive' : 'outline'} className="uppercase">
-                  {alert.severity}
+                  {SEVERITY_LABELS[alert.severity]}
                 </Badge>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-sm text-muted-foreground">Statut</span>
-                <Badge className="capitalize">{alert.status}</Badge>
+                <Badge>{STATUS_LABELS[alert.status]}</Badge>
               </div>
             </div>
 
